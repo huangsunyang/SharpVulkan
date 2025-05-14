@@ -5,6 +5,8 @@ VisualStudioVersion = 17.12.35514.174
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpVulkanExample", "SharpVulkan\SharpVulkanExample.csproj", "{210C5678-8E5E-4CF5-9ADF-9106D508C293}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharpVulkanEngine", "SharpVulkanEngine\SharpVulkanEngine.csproj", "{27B4074E-D760-414F-B080-A5C14900714B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +17,10 @@ Global
 		{210C5678-8E5E-4CF5-9ADF-9106D508C293}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{210C5678-8E5E-4CF5-9ADF-9106D508C293}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{210C5678-8E5E-4CF5-9ADF-9106D508C293}.Release|Any CPU.Build.0 = Release|Any CPU
+		{27B4074E-D760-414F-B080-A5C14900714B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{27B4074E-D760-414F-B080-A5C14900714B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{27B4074E-D760-414F-B080-A5C14900714B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{27B4074E-D760-414F-B080-A5C14900714B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
