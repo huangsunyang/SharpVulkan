@@ -1,4 +1,5 @@
-﻿using Silk.NET.Maths;
+﻿using SharpVulkanEngine;
+using Silk.NET.Maths;
 using Silk.NET.Windowing;
 
 unsafe class MainWindow
@@ -7,6 +8,7 @@ unsafe class MainWindow
 	const int HEIGHT = 600;
 
 	private IWindow? window;
+	private VulkanDevice device = new();
 
 	public static void Main()
 	{
@@ -17,6 +19,7 @@ unsafe class MainWindow
 	public void Run()
 	{
 		InitWindow();
+		InitVulkan();
 		MainLoop();
 		CleanUp();
 	}
@@ -37,6 +40,11 @@ unsafe class MainWindow
 		{
 			throw new Exception("Windowing platform doesn't support Vulkan.");
 		}
+	}
+
+	private void InitVulkan()
+	{
+		device.CreateVulkanInstance(window!);
 	}
 
 	private void MainLoop()
