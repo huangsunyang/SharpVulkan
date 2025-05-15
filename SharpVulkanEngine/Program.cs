@@ -45,6 +45,7 @@ unsafe class MainWindow
 	private void InitVulkan()
 	{
 		device.CreateVulkanInstance(window!);
+		device.PickPhysicalDevice();
 	}
 
 	private void MainLoop()
@@ -55,5 +56,6 @@ unsafe class MainWindow
 	private void CleanUp()
 	{
 		window?.Dispose();
+		device.CleanUp();
 	}
 }

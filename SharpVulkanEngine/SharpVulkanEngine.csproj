@@ -13,4 +13,10 @@
     <PackageReference Include="Silk.NET.Vulkan.Extensions.EXT" Version="2.22.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="vk_layer_settings.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

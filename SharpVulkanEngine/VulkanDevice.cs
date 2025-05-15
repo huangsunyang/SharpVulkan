@@ -16,18 +16,26 @@ namespace SharpVulkanEngine
 	{
 		public Vk Api => Vk.GetApi();
 		protected Instance instance;
+		protected ExtDebugUtils? debugUtils;
+		protected DebugUtilsMessengerEXT debugMessenger;
+
+#if DEBUG
+		public bool EnableValidationLayer = true;
+#else
+		public bool EnableValidationLayer = false;
+#endif
 		public readonly string[] ValidationLayers = { "VK_LAYER_KHRONOS_validation" };
 
-		public void CreateVulkanInstance(IWindow window, bool enableValidationLayer = true)
+		public void CreateVulkanInstance(IWindow window)
 		{
-			if (enableValidationLayer && !CheckValidationLayerSupport(ValidationLayers))
+			if (EnableValidationLayer && !CheckValidationLayerSupport(ValidationLayers))
 			{
 				throw new InvalidOperationException("Validation Layer not supported!");
 			}
 
 			var extensions = window.VkSurface!.GetRequiredExtensions(out var extCount);
 			var extensionsArray = PointerUtils.ToStringArray(extensions, extCount);
-			if (enableValidationLayer)
+			if (EnableValidationLayer)
 			{
 				extensionsArray = extensionsArray.Append(ExtDebugUtils.ExtensionName).ToArray();
 			}
@@ -59,32 +67,79 @@ namespace SharpVulkanEngine
 					PNext = null,
 				};
 
-				if (enableValidationLayer)
+				if (EnableValidationLayer)
 				{
 					createInfo.EnabledLayerCount = (uint)ValidationLayers.Length;
 					createInfo.PpEnabledLayerNames = ValidationLayers.ToBytePPtr(scope);
-					var debugCreateInfo = new DebugUtilsMessengerCreateInfoEXT()
-					{
-						SType = StructureType.DebugUtilsMessengerCreateInfoExt,
-						MessageSeverity = DebugUtilsMessageSeverityFlagsEXT.VerboseBitExt |
-										  DebugUtilsMessageSeverityFlagsEXT.WarningBitExt |
-										  DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt,
-						MessageType = DebugUtilsMessageTypeFlagsEXT.GeneralBitExt |
-									  DebugUtilsMessageTypeFlagsEXT.PerformanceBitExt |
-									  DebugUtilsMessageTypeFlagsEXT.ValidationBitExt,
-						PfnUserCallback = (PfnDebugUtilsMessengerCallbackEXT)DebugCallback
-					};
+					var debugCreateInfo = DebugCreateInfo();
 					createInfo.PNext = &debugCreateInfo;
 				}
 
 				Api.CreateInstance(in createInfo, null, out instance).ThrowOnError("CreateInstance failed!");
+				
+				// setup debug messenger
+				if (EnableValidationLayer)
+				{
+					if (!Api.TryGetInstanceExtension(instance, out debugUtils))
+						return;
+					
+					var debugCreateInfo = DebugCreateInfo();
+					debugUtils!.CreateDebugUtilsMessenger(instance, in debugCreateInfo, null, out debugMessenger).ThrowOnError();
+				}
+				
+				// local function
+				DebugUtilsMessengerCreateInfoEXT DebugCreateInfo() => new DebugUtilsMessengerCreateInfoEXT()
+				{
+					SType = StructureType.DebugUtilsMessengerCreateInfoExt,
+					MessageSeverity = DebugUtilsMessageSeverityFlagsEXT.VerboseBitExt |
+									  DebugUtilsMessageSeverityFlagsEXT.InfoBitExt |
+									  DebugUtilsMessageSeverityFlagsEXT.WarningBitExt |
+									  DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt,
+					MessageType = DebugUtilsMessageTypeFlagsEXT.GeneralBitExt |
+								  DebugUtilsMessageTypeFlagsEXT.PerformanceBitExt |
+								  DebugUtilsMessageTypeFlagsEXT.ValidationBitExt,
+					PfnUserCallback = (PfnDebugUtilsMessengerCallbackEXT)DebugCallback
+				};
 			}
+		}
+
+		public void CleanUp()
+		{
+			if (EnableValidationLayer)
+			{
+				debugUtils?.DestroyDebugUtilsMessenger(instance, debugMessenger, null);
+			}
+
+			Api.DestroyInstance(instance, null);
+			Api.Dispose();
 		}
 
 		private uint DebugCallback(DebugUtilsMessageSeverityFlagsEXT messageSeverity, DebugUtilsMessageTypeFlagsEXT messageType, DebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData)
 		{
-			Console.Write("Validation Layer: ");
-			Console.WriteLine(PointerUtils.ToString(pCallbackData->PMessage));
+			string prefix = "";
+			switch (messageSeverity)
+			{
+				case DebugUtilsMessageSeverityFlagsEXT.VerboseBitExt:
+					Console.ForegroundColor = ConsoleColor.DarkGray;
+					prefix = "[Verbose]";
+					break;
+				case DebugUtilsMessageSeverityFlagsEXT.InfoBitExt:
+					Console.ForegroundColor = ConsoleColor.White;
+					prefix = "[Info]";
+					break;
+				case DebugUtilsMessageSeverityFlagsEXT.WarningBitExt:
+					Console.ForegroundColor = ConsoleColor.Yellow;
+					prefix = "[Warning]";
+					break;
+				case DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt:
+					Console.ForegroundColor = ConsoleColor.Red;
+					prefix = "[Error]";
+					break;
+			}
+			
+			var msg = PointerUtils.ToString(pCallbackData->PMessage);
+			Console.WriteLine($"{DateTime.Now} {prefix} {msg}");
+			Console.ForegroundColor = ConsoleColor.White;
 			return Vk.False;
 		}
 
@@ -117,6 +172,25 @@ namespace SharpVulkanEngine
 			var availableExtensionNames = availableExtensions.Select(x => PointerUtils.ToString(x.ExtensionName));
 			availableExtensionNames.DebugPrint("Available extension names:");
 			return requiredExtensionNamess.All(x => availableExtensionNames.Contains(x));
+		}
+
+		public void PickPhysicalDevice()
+		{
+			uint deviceCount = 0;
+			Api.EnumeratePhysicalDevices(instance, ref deviceCount, null).ThrowOnError();
+
+			if (deviceCount == 0)
+			{
+				throw new Exception("no gpu found with Vulkan support!");
+			}
+			
+			var physicalDevices = new PhysicalDevice[deviceCount];
+			fixed (PhysicalDevice* physicalDevicesPtr = physicalDevices)
+			{
+				Api.EnumeratePhysicalDevices(instance, ref deviceCount, physicalDevicesPtr);
+			}
+
+			physicalDevices.DebugPrint("physical devices");
 		}
 	}
 }
