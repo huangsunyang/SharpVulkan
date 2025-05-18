@@ -45,7 +45,11 @@ unsafe class MainWindow
 	private void InitVulkan()
 	{
 		device.CreateVulkanInstance(window!);
+		device.CreateSurface(window!);
 		device.PickPhysicalDevice();
+		device.CreateLogicalDevice();
+		device.CreateSwapchain(window!);
+		device.CreateImageViews();
 	}
 
 	private void MainLoop()
