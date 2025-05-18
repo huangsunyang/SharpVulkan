@@ -72,7 +72,7 @@ namespace SharpVulkanEngine
 
     public unsafe class VulkanDevice
     {
-        public Vk Api => Vk.GetApi();
+        public static Vk Api => Vk.GetApi();
         protected Instance instance;
         protected ExtDebugUtils? debugUtils;
         protected DebugUtilsMessengerEXT debugMessenger;
@@ -95,6 +95,8 @@ namespace SharpVulkanEngine
         protected Queue graphicsQueue;
         protected Queue presentQueue;
 
+        PipelineLayout pipelineLayout;
+
 #if DEBUG
         public bool EnableValidationLayer = true;
 #else
@@ -102,6 +104,9 @@ namespace SharpVulkanEngine
 #endif
         public readonly string[] ValidationLayers = { "VK_LAYER_KHRONOS_validation" };
         public readonly string[] DeviceExtensions = { KhrSwapchain.ExtensionName };
+
+        public static VulkanDevice Current { get; private set; }
+        public VulkanDevice() => Current = this;
 
         public void CreateVulkanInstance(IWindow window)
         {
@@ -182,6 +187,7 @@ namespace SharpVulkanEngine
 
         public void CleanUp()
         {
+            Api.DestroyPipelineLayout(logicalDevice, pipelineLayout, null);
             foreach (var imageView in swapchainImageViews)
             {
                 Api.DestroyImageView(logicalDevice, imageView, null);
@@ -471,11 +477,11 @@ namespace SharpVulkanEngine
                .ThrowOnError("VK_KHR_swapchain extension not supported");
 
             khrSwapchain.CreateSwapchain(logicalDevice, ref createInfo, null, out swapchain);
-            
+
             // retrieve swapchain images and format/extent
             khrSwapchain.GetSwapchainImages(logicalDevice, swapchain, ref imageCount, null);
             swapchainImages = new Image[imageCount];
-            fixed (Image * imagePtr = swapchainImages)
+            fixed (Image* imagePtr = swapchainImages)
             {
                 khrSwapchain.GetSwapchainImages(logicalDevice, swapchain, ref imageCount, imagePtr);
             }
@@ -512,6 +518,164 @@ namespace SharpVulkanEngine
                 };
 
                 Api.CreateImageView(logicalDevice, ref createInfo, null, out swapchainImageViews[i]).ThrowOnError();
+            }
+        }
+
+        public void CreateGraphicsPipeline()
+        {
+            var vertShaderModule = ShaderUtils.CreateShaderModule("Assets/vert.vert");
+            var fragShaderModule = ShaderUtils.CreateShaderModule("Assets/frag.frag");
+
+            using (var scope = new AutoRelaseScope())
+            {
+                var vertStageCreateInfo = new PipelineShaderStageCreateInfo()
+                {
+                    SType = StructureType.PipelineShaderStageCreateInfo,
+                    Stage = ShaderStageFlags.VertexBit,
+                    Module = vertShaderModule,
+                    PName = "main".ToBytePtr(scope),
+                };
+
+                var fragStageCreateInfo = new PipelineShaderStageCreateInfo()
+                {
+                    SType = StructureType.PipelineShaderStageCreateInfo,
+                    Stage = ShaderStageFlags.FragmentBit,
+                    Module = fragShaderModule,
+                    PName = "main".ToBytePtr(scope),
+                };
+
+                var shaderStages = stackalloc[] { vertStageCreateInfo, fragStageCreateInfo };
+
+                var vertextInputStateCreateInfo = new PipelineVertexInputStateCreateInfo()
+                {
+                    SType = StructureType.PipelineVertexInputStateCreateInfo,
+                    VertexBindingDescriptionCount = 0,
+                    PVertexBindingDescriptions = null,
+                    VertexAttributeDescriptionCount = 0,
+                    PVertexAttributeDescriptions = null,
+                };
+
+                var inputAssemblyStateCreateInfo = new PipelineInputAssemblyStateCreateInfo()
+                {
+                    SType = StructureType.PipelineInputAssemblyStateCreateInfo,
+                    Topology = PrimitiveTopology.TriangleList,
+                    PrimitiveRestartEnable = Vk.False,
+                };
+
+                var viewPort = new Viewport()
+                {
+                    X = 0,
+                    Y = 0,
+                    Width = swapchainImageExtent.Width,
+                    Height = swapchainImageExtent.Height,
+                    MinDepth = 0,
+                    MaxDepth = 1,
+                };
+
+                var scissor = new Rect2D()
+                {
+                    Offset = new Offset2D(0, 0),
+                    Extent = swapchainImageExtent,
+                };
+
+                var dynamicStates = stackalloc[] { DynamicState.Viewport, DynamicState.Scissor };
+                var dynamicStateCreateInfo = new PipelineDynamicStateCreateInfo()
+                {
+                    SType = StructureType.PipelineDynamicStateCreateInfo,
+                    DynamicStateCount = 2,
+                    PDynamicStates = dynamicStates,
+                };
+
+                var viewPortCreateInfo = new PipelineViewportStateCreateInfo()
+                {
+                    SType = StructureType.PipelineViewportStateCreateInfo,
+                    ViewportCount = 1,
+                    ScissorCount = 1,
+                };
+
+                var rasterizationStateCreateInfo = new PipelineRasterizationStateCreateInfo()
+                {
+                    SType = StructureType.PipelineRasterizationStateCreateInfo,
+                    DepthClampEnable = Vk.False,
+                    RasterizerDiscardEnable = Vk.False,
+                    PolygonMode = PolygonMode.Fill,
+                    LineWidth = 1,
+                    CullMode = CullModeFlags.BackBit,
+                    FrontFace = FrontFace.Clockwise,
+                    DepthBiasEnable = Vk.False,
+                    DepthBiasClamp = 0,
+                    DepthBiasConstantFactor = 0,
+                    DepthBiasSlopeFactor = 0,
+                };
+
+                var multiSampleStateCreateInfo = new PipelineMultisampleStateCreateInfo()
+                {
+                    SType = StructureType.PipelineMultisampleStateCreateInfo,
+                    SampleShadingEnable = Vk.False,
+                    RasterizationSamples = SampleCountFlags.Count1Bit,
+                    MinSampleShading = 1,
+                    PSampleMask = null,
+                    AlphaToCoverageEnable = Vk.False,
+                    AlphaToOneEnable = Vk.False,
+                };
+
+                var colorBlendAttachment = new PipelineColorBlendAttachmentState()
+                {
+                    ColorWriteMask = ColorComponentFlags.RBit | ColorComponentFlags.GBit | ColorComponentFlags.BBit | ColorComponentFlags.ABit,
+                    BlendEnable = false,
+                    SrcAlphaBlendFactor = BlendFactor.One,
+                    DstColorBlendFactor = BlendFactor.Zero,
+                    ColorBlendOp = BlendOp.Add,
+                    SrcColorBlendFactor = BlendFactor.One,
+                    DstAlphaBlendFactor = BlendFactor.Zero,
+                    AlphaBlendOp = BlendOp.Add,
+                };
+
+                var blendConsts = new float[4] { 0f, 0f, 0f, 0f };
+                var colorBlendStateCreateInfo = new PipelineColorBlendStateCreateInfo()
+                {
+                    SType = StructureType.PipelineColorBlendStateCreateInfo,
+                    LogicOpEnable = Vk.False,
+                    LogicOp = LogicOp.Copy,
+                    AttachmentCount = 1,
+                    PAttachments = &colorBlendAttachment,
+                };
+
+                colorBlendStateCreateInfo.BlendConstants[0] = 0;
+                colorBlendStateCreateInfo.BlendConstants[1] = 0;
+                colorBlendStateCreateInfo.BlendConstants[2] = 0;
+                colorBlendStateCreateInfo.BlendConstants[3] = 0;
+
+                var layoutCreateInfo = new PipelineLayoutCreateInfo()
+                {
+                    SType = StructureType.PipelineLayoutCreateInfo,
+                    SetLayoutCount = 0,
+                    PSetLayouts = null,
+                    PushConstantRangeCount = 0,
+                    PPushConstantRanges = null,
+                };
+
+                Api.CreatePipelineLayout(logicalDevice, ref layoutCreateInfo, null, out pipelineLayout).ThrowOnError();
+            }
+
+            Api.DestroyShaderModule(logicalDevice, vertShaderModule, null);
+            Api.DestroyShaderModule(logicalDevice, fragShaderModule, null);
+        }
+
+        public ShaderModule CreateShaderModule(string path)
+        {
+            var code = File.ReadAllBytes(path);
+            fixed (byte* src = code)
+            {
+                ShaderModuleCreateInfo createInfo = new()
+                {
+                    SType = StructureType.ShaderModuleCreateInfo,
+                    CodeSize = (uint)code.Length,
+                    PCode = (uint*)src,
+                };
+
+                Api.CreateShaderModule(logicalDevice, ref createInfo, null, out var shaderModule).ThrowOnError();
+                return shaderModule;
             }
         }
     }
