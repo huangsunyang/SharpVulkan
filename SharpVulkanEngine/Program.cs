@@ -50,7 +50,9 @@ unsafe class MainWindow
 		device.CreateLogicalDevice();
 		device.CreateSwapchain(window!);
 		device.CreateImageViews();
+		device.CreateRenderPass();
 		device.CreateGraphicsPipeline();
+		device.CreateFrameBuffer();
 	}
 
 	private void MainLoop()

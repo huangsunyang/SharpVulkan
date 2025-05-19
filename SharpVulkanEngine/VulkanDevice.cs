@@ -16,7 +16,7 @@ using static System.Formats.Asn1.AsnWriter;
 
 namespace SharpVulkanEngine
 {
-    public struct QueueFamilyIndex
+    public struct QueueFamilyIndices
     {
         public uint? graphicsFamilyIndex;
         public uint? presentFamilyIndex;
@@ -87,6 +87,7 @@ namespace SharpVulkanEngine
         Extent2D swapchainImageExtent;
 
         ImageView[] swapchainImageViews;
+        Framebuffer[] swapchainFrameBuffers;
 
         SwapchainSupportDetails swapchainSupportDetails;
         protected PhysicalDevice physicalDevice;
@@ -95,7 +96,9 @@ namespace SharpVulkanEngine
         protected Queue graphicsQueue;
         protected Queue presentQueue;
 
+        RenderPass renderPass;
         PipelineLayout pipelineLayout;
+        Pipeline graphicsPipeline;
 
 #if DEBUG
         public bool EnableValidationLayer = true;
@@ -187,7 +190,10 @@ namespace SharpVulkanEngine
 
         public void CleanUp()
         {
+            Api.DestroyPipeline(logicalDevice, graphicsPipeline, null);
             Api.DestroyPipelineLayout(logicalDevice, pipelineLayout, null);
+            Api.DestroyRenderPass(logicalDevice, renderPass, null);
+
             foreach (var imageView in swapchainImageViews)
             {
                 Api.DestroyImageView(logicalDevice, imageView, null);
@@ -284,15 +290,12 @@ namespace SharpVulkanEngine
             {
                 if (IsSuitablePhysicalDevice(device))
                 {
-                    this.physicalDevice = device;
+                    physicalDevice = device;
                     physicalDeviceFound = true;
                 }
             }
 
-            if (!physicalDeviceFound)
-            {
-                throw new Exception("no suitable physical device found!");
-            }
+            physicalDeviceFound.ThrowOnError("no suitable physical device found!");
         }
 
         protected SwapchainSupportDetails QuerySwapchainSupport(PhysicalDevice device)
@@ -343,7 +346,7 @@ namespace SharpVulkanEngine
             return queueFamilyIndex.Complete() && extensionSupport;
         }
 
-        QueueFamilyIndex FindQueueFamilyIndex(PhysicalDevice device)
+        QueueFamilyIndices FindQueueFamilyIndex(PhysicalDevice device)
         {
             uint queueFamilyCount = 0;
             Api.GetPhysicalDeviceQueueFamilyProperties(device, ref queueFamilyCount, null);
@@ -355,7 +358,7 @@ namespace SharpVulkanEngine
             }
 
             // find queue with graphic bits and support present
-            var queueFamilyIndex = new QueueFamilyIndex();
+            var queueFamilyIndex = new QueueFamilyIndices();
             for (uint i = 0; i < queueFamilyCount; i++)
             {
                 var queueFamily = queueFamilies[i];
@@ -398,14 +401,14 @@ namespace SharpVulkanEngine
             {
                 float queuePriorities = 1.0f;
 
-                var queueFamilyIndex = FindQueueFamilyIndex(physicalDevice);
-                var uniqueFamilyIndex = queueFamilyIndex.Unique();
-                var mem = GlobalMemory.Allocate(sizeof(DeviceQueueCreateInfo) * uniqueFamilyIndex.Count());
+                var queueFamilyIndices = FindQueueFamilyIndex(physicalDevice);
+                var uniqueFamilyIndices = queueFamilyIndices.Unique();
+                var mem = GlobalMemory.Allocate(sizeof(DeviceQueueCreateInfo) * uniqueFamilyIndices.Count());
                 var queueCreateInfos = (DeviceQueueCreateInfo*)Unsafe.AsPointer(ref mem.GetPinnableReference());
                 scope.Add((nint)queueCreateInfos, AllocType.SilkMarshall);
 
                 int i = 0;
-                foreach (var queueFamily in uniqueFamilyIndex)
+                foreach (var queueFamily in uniqueFamilyIndices)
                 {
                     queueCreateInfos[i++] = new DeviceQueueCreateInfo()
                     {
@@ -421,7 +424,7 @@ namespace SharpVulkanEngine
                 {
                     SType = StructureType.DeviceCreateInfo,
                     PQueueCreateInfos = queueCreateInfos,
-                    QueueCreateInfoCount = (uint)uniqueFamilyIndex.Count(),
+                    QueueCreateInfoCount = (uint)uniqueFamilyIndices.Count(),
                     PEnabledFeatures = &deviceFeatures,
                     EnabledLayerCount = 0,
                     EnabledExtensionCount = (uint)DeviceExtensions.Count(),
@@ -436,8 +439,8 @@ namespace SharpVulkanEngine
 
                 Api.CreateDevice(physicalDevice, in deviceCreateInfo, null, out logicalDevice).ThrowOnError();
 
-                Api.GetDeviceQueue(logicalDevice, queueFamilyIndex.graphicsFamilyIndex!.Value, 0, out graphicsQueue);
-                Api.GetDeviceQueue(logicalDevice, queueFamilyIndex.presentFamilyIndex!.Value, 0, out presentQueue);
+                Api.GetDeviceQueue(logicalDevice, queueFamilyIndices.graphicsFamilyIndex!.Value, 0, out graphicsQueue);
+                Api.GetDeviceQueue(logicalDevice, queueFamilyIndices.presentFamilyIndex!.Value, 0, out presentQueue);
             }
         }
 
@@ -521,10 +524,49 @@ namespace SharpVulkanEngine
             }
         }
 
+        public void CreateRenderPass()
+        {
+            var attachmentDesc = new AttachmentDescription()
+            {
+                Format = swapchainImageFormat,
+                Samples = SampleCountFlags.Count1Bit,
+                LoadOp = AttachmentLoadOp.Clear,
+                StoreOp = AttachmentStoreOp.Store,
+                StencilLoadOp = AttachmentLoadOp.DontCare,
+                StencilStoreOp = AttachmentStoreOp.DontCare,
+                InitialLayout = ImageLayout.Undefined,
+                FinalLayout = ImageLayout.PresentSrcKhr,
+            };
+
+            var colorAttachmentRef = new AttachmentReference()
+            {
+                Attachment = 0,
+                Layout = ImageLayout.ColorAttachmentOptimal,
+            };
+
+            var subPassDesc = new SubpassDescription()
+            {
+                PipelineBindPoint = PipelineBindPoint.Graphics,
+                ColorAttachmentCount = 1,
+                PColorAttachments = &colorAttachmentRef,
+            };
+
+            var createInfo = new RenderPassCreateInfo()
+            {
+                SType = StructureType.RenderPassCreateInfo,
+                AttachmentCount = 1,
+                PAttachments = &attachmentDesc,
+                SubpassCount = 1,
+                PSubpasses = &subPassDesc,
+            };
+
+            Api.CreateRenderPass(logicalDevice, ref createInfo, null, out renderPass).ThrowOnError();
+        }
+
         public void CreateGraphicsPipeline()
         {
-            var vertShaderModule = ShaderUtils.CreateShaderModule("Assets/vert.vert");
-            var fragShaderModule = ShaderUtils.CreateShaderModule("Assets/frag.frag");
+            var vertShaderModule = ShaderUtils.CreateShaderModule("Assets/triangle.vert");
+            var fragShaderModule = ShaderUtils.CreateShaderModule("Assets/triangle.frag");
 
             using (var scope = new AutoRelaseScope())
             {
@@ -543,8 +585,6 @@ namespace SharpVulkanEngine
                     Module = fragShaderModule,
                     PName = "main".ToBytePtr(scope),
                 };
-
-                var shaderStages = stackalloc[] { vertStageCreateInfo, fragStageCreateInfo };
 
                 var vertextInputStateCreateInfo = new PipelineVertexInputStateCreateInfo()
                 {
@@ -586,7 +626,7 @@ namespace SharpVulkanEngine
                     PDynamicStates = dynamicStates,
                 };
 
-                var viewPortCreateInfo = new PipelineViewportStateCreateInfo()
+                var viewPortStateCreateInfo = new PipelineViewportStateCreateInfo()
                 {
                     SType = StructureType.PipelineViewportStateCreateInfo,
                     ViewportCount = 1,
@@ -656,6 +696,29 @@ namespace SharpVulkanEngine
                 };
 
                 Api.CreatePipelineLayout(logicalDevice, ref layoutCreateInfo, null, out pipelineLayout).ThrowOnError();
+
+                var shaderStages = stackalloc[] { vertStageCreateInfo, fragStageCreateInfo };
+                var pipelinecreateInfo = new GraphicsPipelineCreateInfo()
+                {
+                    SType = StructureType.GraphicsPipelineCreateInfo,
+                    StageCount = 2,
+                    PStages = shaderStages,
+                    PVertexInputState = &vertextInputStateCreateInfo,
+                    PInputAssemblyState = &inputAssemblyStateCreateInfo,
+                    PViewportState = &viewPortStateCreateInfo,
+                    PRasterizationState = &rasterizationStateCreateInfo,
+                    PMultisampleState = &multiSampleStateCreateInfo,
+                    PDepthStencilState = null,
+                    PColorBlendState = &colorBlendStateCreateInfo,
+                    PDynamicState = &dynamicStateCreateInfo,
+                    Layout = pipelineLayout,
+                    RenderPass = renderPass,
+                    Subpass = 0,
+                    BasePipelineHandle = default,
+                    BasePipelineIndex = -1,
+                };
+
+                Api.CreateGraphicsPipelines(logicalDevice, default, 1, &pipelinecreateInfo, null, out graphicsPipeline).ThrowOnError();
             }
 
             Api.DestroyShaderModule(logicalDevice, vertShaderModule, null);
@@ -676,6 +739,27 @@ namespace SharpVulkanEngine
 
                 Api.CreateShaderModule(logicalDevice, ref createInfo, null, out var shaderModule).ThrowOnError();
                 return shaderModule;
+            }
+        }
+
+        public void CreateFrameBuffer()
+        {
+            swapchainFrameBuffers = new Framebuffer[swapchainImageViews.Length];
+            for (int i = 0; i < swapchainFrameBuffers.Length; i++)
+            {
+                var attachment = stackalloc[] { swapchainImageViews[i] };
+                var createInfo = new FramebufferCreateInfo()
+                {
+                    SType = StructureType.FramebufferCreateInfo,
+                    RenderPass = renderPass,
+                    AttachmentCount = 1,
+                    PAttachments = attachment,
+                    Width = swapchainImageExtent.Width,
+                    Height = swapchainImageExtent.Height,
+                    Layers = 1,
+                };
+
+                Api.CreateFramebuffer(logicalDevice, ref createInfo, null, out swapchainFrameBuffers[i]).ThrowOnError();
             }
         }
     }
