@@ -53,13 +53,19 @@ unsafe class MainWindow
 		device.CreateRenderPass();
 		device.CreateGraphicsPipeline();
 		device.CreateFrameBuffer();
+		device.CreateCommandPool();
+		device.CreateCommandBuffer();
+		device.CreateSyncObjects();
 	}
 
 	private void MainLoop()
 	{
+		window!.Render += OnRender;
 		window!.Run();
+		device.WaitIdle();
 	}
 
+	private void OnRender(double delta) => device.Render(delta);
 	private void CleanUp()
 	{
 		window?.Dispose();

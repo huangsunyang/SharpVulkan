@@ -100,6 +100,13 @@ namespace SharpVulkanEngine
         PipelineLayout pipelineLayout;
         Pipeline graphicsPipeline;
 
+        CommandPool commandPool;
+        CommandBuffer commandBuffer;
+
+        Silk.NET.Vulkan.Semaphore imageAvailableSemaphore;
+        Silk.NET.Vulkan.Semaphore renderFinishedSemaphore;
+        Fence inFlightFence;
+
 #if DEBUG
         public bool EnableValidationLayer = true;
 #else
@@ -190,6 +197,17 @@ namespace SharpVulkanEngine
 
         public void CleanUp()
         {
+            Api.DestroyFence(logicalDevice, inFlightFence, null);
+            Api.DestroySemaphore(logicalDevice, renderFinishedSemaphore, null);
+            Api.DestroySemaphore(logicalDevice, imageAvailableSemaphore, null);
+
+            Api.DestroyCommandPool(logicalDevice, commandPool, null);
+
+            foreach (var framebuffer in swapchainFrameBuffers)
+            {
+                Api.DestroyFramebuffer(logicalDevice, framebuffer, null);
+            }
+
             Api.DestroyPipeline(logicalDevice, graphicsPipeline, null);
             Api.DestroyPipelineLayout(logicalDevice, pipelineLayout, null);
             Api.DestroyRenderPass(logicalDevice, renderPass, null);
@@ -551,6 +569,16 @@ namespace SharpVulkanEngine
                 PColorAttachments = &colorAttachmentRef,
             };
 
+            var dependency = new SubpassDependency()
+            {
+                SrcSubpass = Vk.SubpassExternal,
+                DstSubpass = 0,
+                SrcStageMask = PipelineStageFlags.ColorAttachmentOutputBit,
+                SrcAccessMask = 0,
+                DstStageMask = PipelineStageFlags.ColorAttachmentOutputBit,
+                DstAccessMask = AccessFlags.ColorAttachmentWriteBit,
+            };
+
             var createInfo = new RenderPassCreateInfo()
             {
                 SType = StructureType.RenderPassCreateInfo,
@@ -558,6 +586,8 @@ namespace SharpVulkanEngine
                 PAttachments = &attachmentDesc,
                 SubpassCount = 1,
                 PSubpasses = &subPassDesc,
+                DependencyCount = 1,
+                PDependencies = &dependency,
             };
 
             Api.CreateRenderPass(logicalDevice, ref createInfo, null, out renderPass).ThrowOnError();
@@ -762,5 +792,150 @@ namespace SharpVulkanEngine
                 Api.CreateFramebuffer(logicalDevice, ref createInfo, null, out swapchainFrameBuffers[i]).ThrowOnError();
             }
         }
+
+        public void CreateCommandPool()
+        {
+            var queueIndices = FindQueueFamilyIndex(physicalDevice);
+            var poolInfo = new CommandPoolCreateInfo()
+            {
+                SType = StructureType.CommandPoolCreateInfo,
+                Flags = CommandPoolCreateFlags.ResetCommandBufferBit,
+                QueueFamilyIndex = queueIndices.graphicsFamilyIndex!.Value,
+            };
+
+            Api.CreateCommandPool(logicalDevice, ref poolInfo, null, out commandPool).ThrowOnError();
+        }
+
+        public void CreateCommandBuffer()
+        {
+            var allocInfo = new CommandBufferAllocateInfo()
+            {
+                SType = StructureType.CommandBufferAllocateInfo,
+                CommandPool = commandPool,
+                Level = CommandBufferLevel.Primary,
+                CommandBufferCount = 1,
+            };
+
+            Api.AllocateCommandBuffers(logicalDevice, ref allocInfo, out commandBuffer).ThrowOnError();
+        }
+
+        public void RecordCommandBuffer(CommandBuffer commandBuffer, uint imageIndex)
+        {
+            var commandBufferBeginInfo = new CommandBufferBeginInfo()
+            {
+                SType = StructureType.CommandBufferBeginInfo,
+                Flags = CommandBufferUsageFlags.None,
+                PInheritanceInfo = null,
+            };
+
+            Api.BeginCommandBuffer(commandBuffer, ref commandBufferBeginInfo).ThrowOnError();
+
+            var clearColor = new ClearValue();
+            var renderPassBeginInfo = new RenderPassBeginInfo()
+            {
+                SType = StructureType.RenderPassBeginInfo,
+                RenderPass = renderPass,
+                Framebuffer = swapchainFrameBuffers[imageIndex],
+                RenderArea = new Rect2D()
+                {
+                    Offset = new Offset2D(0, 0),
+                    Extent = swapchainImageExtent,
+                },
+                ClearValueCount = 1,
+                PClearValues = &clearColor,
+            };
+
+            Api.CmdBeginRenderPass(commandBuffer, ref renderPassBeginInfo, SubpassContents.Inline);
+
+            Api.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, graphicsPipeline);
+
+            var viewPort = new Viewport()
+            {
+                X = 0,
+                Y = 0,
+                Width = swapchainImageExtent.Width,
+                Height = swapchainImageExtent.Height,
+                MinDepth = 0,
+                MaxDepth = 1,
+            };
+            Api.CmdSetViewport(commandBuffer, 0, 1, &viewPort);
+
+            var scissor = new Rect2D()
+            {
+                Offset = new Offset2D(0, 0),
+                Extent = swapchainImageExtent,
+            };
+            Api.CmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+            Api.CmdDraw(commandBuffer, 3, 1, 0, 0);
+
+            Api.CmdEndRenderPass(commandBuffer);
+
+            Api.EndCommandBuffer(commandBuffer).ThrowOnError();
+        }
+
+        public void CreateSyncObjects()
+        {
+            var semaphoreInfo = new SemaphoreCreateInfo()
+            {
+                SType = StructureType.SemaphoreCreateInfo,
+            };
+
+            var fenceInfo = new FenceCreateInfo()
+            {
+                SType = StructureType.FenceCreateInfo,
+                Flags = FenceCreateFlags.SignaledBit,
+            };
+
+            Api.CreateSemaphore(logicalDevice, ref semaphoreInfo, null, out imageAvailableSemaphore).ThrowOnError();
+            Api.CreateSemaphore(logicalDevice, ref semaphoreInfo, null, out renderFinishedSemaphore).ThrowOnError();
+            Api.CreateFence(logicalDevice, ref fenceInfo, null, out inFlightFence);
+        }
+
+        public void Render(double delta)
+        {
+            Api.WaitForFences(logicalDevice, 1, in inFlightFence, true, long.MaxValue);
+            Api.ResetFences(logicalDevice, 1, in inFlightFence);
+
+            uint imageIndex = 0;
+            khrSwapchain.AcquireNextImage(logicalDevice, swapchain, ulong.MaxValue, imageAvailableSemaphore, default, ref imageIndex);
+
+            Api.ResetCommandBuffer(commandBuffer, CommandBufferResetFlags.None);
+            RecordCommandBuffer(commandBuffer, imageIndex);
+
+            var waitSemaphores = stackalloc[] { imageAvailableSemaphore };
+            var waitStageMask = stackalloc[] { PipelineStageFlags.ColorAttachmentOutputBit };
+            var signalSemaphores = stackalloc[] { renderFinishedSemaphore };
+            var cmdBuffer = commandBuffer;
+            var submitInfo = new SubmitInfo()
+            {
+                SType = StructureType.SubmitInfo,
+                WaitSemaphoreCount = 1,
+                PWaitSemaphores = waitSemaphores,
+                PWaitDstStageMask = waitStageMask,
+                CommandBufferCount = 1,
+                PCommandBuffers = &cmdBuffer,
+                SignalSemaphoreCount = 1,
+                PSignalSemaphores = signalSemaphores,
+            };
+
+            Api.QueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence).ThrowOnError();
+
+            var swapchains = stackalloc[] { swapchain };
+            var presentInfo = new PresentInfoKHR()
+            {
+                SType = StructureType.PresentInfoKhr,
+                WaitSemaphoreCount = 1,
+                PWaitSemaphores = signalSemaphores,
+                SwapchainCount = 1,
+                PSwapchains = swapchains,
+                PImageIndices = &imageIndex,
+                PResults = null,
+            };
+
+            khrSwapchain.QueuePresent(presentQueue, in presentInfo);
+        }
+
+        public void WaitIdle() => Api.DeviceWaitIdle(logicalDevice);
     }
 }
